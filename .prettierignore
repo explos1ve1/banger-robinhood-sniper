@@ -1,0 +1,5 @@
+node_modules/
+dist/
+data/
+package-lock.json
+docs/assets/
