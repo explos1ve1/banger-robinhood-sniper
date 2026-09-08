@@ -1,6 +1,6 @@
 # Supported network and deployments
 
-Checked against public documentation on September 7, 2026. Addresses below
+Checked against public documentation on September 8, 2026. Addresses below
 are configuration candidates, not a claim that they were audited or verified
 through a working mainnet RPC in this environment.
 
@@ -26,11 +26,29 @@ through a working mainnet RPC in this environment.
 - Uniswap V3 integration: https://developers.uniswap.org/docs/protocols/v3/guides/swapping/getting-started
 - ethers contract API: https://docs.ethers.org/v6/api/contract/
 
-The public PONS source distinguishes V1's Uniswap V3 launches from V2's
-bonding curve and graduated V4 pools. BANGER's current adapter supports
-the former mechanism with WETH. It does not trade V2 curves or V4 pools.
-PONS V1 can enforce early buy restrictions; BANGER respects call reverts
-and retries within the configured entry-age window.
+PONS V1 launches can be observed through compatible WETH/V3 pools. PONS V2
+uses its own launch events and bonding curves, then routes open positions to
+a native ETH/V4 pool after graduation. PONS V1 early-window restrictions are
+respected by simulation/revert handling. For V2, the opening tax is read for
+the recipient and the default waits for it to reach zero.
+
+| PONS / V4 component | Published address |
+| --- | --- |
+| Current PONS V2 factory | `0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e` |
+| PoolManager | `0x8366a39cc670b4001a1121b8f6a443a643e40951` |
+| Universal Router 2.1.1 | `0x8876789976decbfcbbbe364623c63652db8c0904` |
+| V4 Quoter | `0x8dc178efb8111bb0973dd9d722ebeff267c98f94` |
+| StateView | `0xf3334192d15450cdd385c8b70e03f9a6bd9e673b` |
+| Permit2 | `0x000000000022D473030F116dDEE9F6B43aC78BA3` |
+
+The hook is resolved from this factory and its reverse factory/manager
+relationships are checked. Each candidate's curve, token and quote asset
+must agree with its factory launch record. Older V2 deployments are not
+silently mixed into the same state. Addresses were compared with:
+
+- https://docs.ponsfamily.com/v2
+- https://developers.uniswap.org/docs/protocols/v4/deployments
+- https://github.com/Uniswap/sdks/blob/main/sdks/universal-router-sdk/src/utils/constants.ts
 
 `doctor` checks the RPC chain ID, nonempty bytecode, router and quoter
 factory/WETH getters, and the router selector. Each candidate is checked

@@ -28,6 +28,19 @@ const schema = z.object({
   V3_QUOTER: address.default('0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7'),
   WETH: address.default('0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73'),
   ROUTER_KIND: z.enum(['auto', 'classic', 'router02']).default('auto'),
+  VENUES: z.enum(['v3', 'pons', 'both']).default('v3'),
+  PONS_V2_FACTORY: address.default('0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e'),
+  V4_POOL_MANAGER: address.default('0x8366a39cc670b4001a1121b8f6a443a643e40951'),
+  V4_ROUTER: address.default('0x8876789976decbfcbbbe364623c63652db8c0904'),
+  V4_ROUTER_VERSION: z.enum(['2.0', '2.1.1']).default('2.1.1'),
+  V4_QUOTER: address.default('0x8dc178efb8111bb0973dd9d722ebeff267c98f94'),
+  V4_STATE_VIEW: address.default('0xf3334192d15450cdd385c8b70e03f9a6bd9e673b'),
+  PERMIT2: address.default('0x000000000022D473030F116dDEE9F6B43aC78BA3'),
+  PONS_MIN_REAL_ETH: eth('0.01'),
+  PONS_MAX_FEE_BPS: integer(500, 0, 2000),
+  PONS_MAX_SNIPE_TAX_BPS: integer(0, 0, 9900),
+  PONS_MAX_PROGRESS_BPS: integer(8500, 1, 9999),
+  PONS_EXIT_PROGRESS_BPS: integer(9500, 1, 9999),
   FEE_TIERS: z
     .string()
     .default('10000')
@@ -80,6 +93,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     throw Error('Live mode requires a local PRIVATE_KEY and LIVE_ACK=I_ACCEPT_REAL_TRADES');
   // A read-only run never retains a accidentally configured signing key.
   if (c.MODE !== 'live') c.PRIVATE_KEY = '';
+  if (c.PONS_EXIT_PROGRESS_BPS <= c.PONS_MAX_PROGRESS_BPS)
+    throw Error('PONS_EXIT_PROGRESS_BPS must exceed PONS_MAX_PROGRESS_BPS');
   return c;
 }
 export function minOut(quote: bigint, bps: number): bigint {

@@ -6,7 +6,8 @@ import dotenv from 'dotenv';
 import { Wallet, parseEther } from 'ethers';
 import { loadConfig, safeError } from './config.js';
 import { Engine } from './engine.js';
-import { V3, makeProvider } from './v3.js';
+import { makeProvider } from './v3.js';
+import { Venues } from './venues.js';
 import { Store, identity, stateDirectory } from './store.js';
 import { terminal } from './terminal.js';
 import { demoState } from './demo.js';
@@ -69,7 +70,7 @@ async function main() {
   if (command === 'doctor') {
     const provider = makeProvider(c);
     try {
-      console.log(JSON.stringify(await new V3(c, provider).doctor(), null, 2));
+      console.log(JSON.stringify(await new Venues(c, provider).doctor(), null, 2));
     } finally {
       provider.destroy();
     }

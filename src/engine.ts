@@ -1,10 +1,13 @@
-import { Contract, Wallet, formatEther, type JsonRpcProvider } from 'ethers';
+import { Contract, Wallet, ZeroAddress, formatEther } from 'ethers';
 import fs from 'node:fs';
 import { ERC20 } from './abi.js';
 import { minOut, safeError, type Config } from './config.js';
 import { Store, identity, stateDirectory, type Candidate, type Position } from './store.js';
 import { Transactions } from './transactions.js';
-import { V3, makeProvider, type Market, type RpcProvider } from './v3.js';
+import { makeProvider, type Market, type RpcProvider } from './v3.js';
+
+import { Venues } from './venues.js';
+import { poolId } from './v4.js';
 
 export function openPositions(store: Store) {
   return Object.values(store.state.positions).filter((p) => !p.closedAt);
@@ -30,7 +33,7 @@ export function exitReason(
 }
 export class Engine {
   readonly provider: RpcProvider;
-  readonly dex: V3;
+  readonly dex: Venues;
   readonly account: string;
   readonly store: Store;
   readonly tx?: Transactions;
@@ -42,8 +45,8 @@ export class Engine {
     provider?: RpcProvider,
   ) {
     this.provider = provider ?? makeProvider(c);
-    this.dex = new V3(c, this.provider);
     this.account = c.MODE === 'live' ? new Wallet(c.PRIVATE_KEY).address : 'no-signer';
+    this.dex = new Venues(c, this.provider, c.MODE === 'live' ? this.account : ZeroAddress);
     this.store = new Store(stateDirectory(c, this.account), identity(c, this.account));
     this.store.acquire();
     if (c.MODE === 'live')
@@ -55,7 +58,34 @@ export class Engine {
       );
   }
   async init() {
-    const report = await this.dex.doctor();
+    const open = openPositions(this.store);
+    const managePons =
+      open.some((p) => p.venue === 'pons') ||
+      ['curve', 'v4'].includes(this.store.state.pending?.route ?? '');
+    const manageV3 =
+      open.some((p) => p.venue !== 'pons') ||
+      (this.store.state.pending != null && (this.store.state.pending.route ?? 'v3') === 'v3');
+    let ponsDeployment: string | undefined;
+    if (this.c.VENUES !== 'v3' || managePons) {
+      const deployment = [
+        this.c.PONS_V2_FACTORY,
+        this.c.V4_POOL_MANAGER,
+        this.c.V4_ROUTER,
+        this.c.V4_QUOTER,
+        this.c.V4_STATE_VIEW,
+        this.c.PERMIT2,
+        this.c.V4_ROUTER_VERSION,
+      ]
+        .join(':')
+        .toLowerCase();
+      if (this.store.state.ponsDeployment && this.store.state.ponsDeployment !== deployment)
+        throw Error(
+          'PONS deployment changed. Keep the old configuration to manage its positions; use a separate DATA_DIR for another deployment.',
+        );
+      ponsDeployment = deployment;
+    }
+    const report = await this.dex.doctor(managePons, manageV3);
+    if (ponsDeployment) this.store.state.ponsDeployment = ponsDeployment;
     this.block = report.block;
     this.connected = true;
     this.store.event(
@@ -105,7 +135,10 @@ export class Engine {
       for (const candidate of found) {
         if (!s.pools[candidate.pool]) {
           s.pools[candidate.pool] = candidate;
-          this.store.event('DETECTED', `${candidate.token.slice(0, 12)} / V3 fee ${candidate.fee}`);
+          this.store.event(
+            'DETECTED',
+            `${candidate.token.slice(0, 12)} / ${candidate.venue === 'pons' ? 'PONS V2 curve' : 'V3 fee ' + candidate.fee}`,
+          );
         }
       }
       const b = await this.provider.getBlock(to);
@@ -127,7 +160,7 @@ export class Engine {
     if (this.store.state.pending) return;
     await this.scan();
     const queue = Object.values(this.store.state.pools)
-      .filter((p) => p.status === 'waiting' || p.status === 'ready')
+      .filter((p) => (p.status === 'waiting' || p.status === 'ready') && this.dex.enabled(p.venue))
       .sort((a, b) => b.block - a.block)
       .slice(0, 20);
     for (const c of queue) {
@@ -148,13 +181,13 @@ export class Engine {
           this.store.save();
           continue;
         }
-        const m = await this.dex.market(c.pool);
+        const m = await this.dex.market(c.pool, c.venue);
         c.symbol = m.symbol;
         c.decimals = m.decimals;
         if (m.token !== c.token || m.fee !== c.fee)
           throw Error('Pool event does not match contract');
-        if (m.liquidity === 0n || m.wethBalance < this.c.MIN_POOL_WETH_ETH)
-          throw Error('Waiting for active liquidity and minimum WETH balance');
+        c.progressBps = m.pons?.progressBps;
+        this.dex.entryCheck(m);
         const q = await this.dex.quote(m, this.c.BUY_ETH);
         if (q.priceMoveBps > this.c.MAX_PRICE_MOVE_BPS)
           throw Error('Quoted price move exceeds limit');
@@ -165,7 +198,10 @@ export class Engine {
         if (c.status !== 'ready') {
           c.status = 'ready';
           c.reason = 'Liquidity + quote checks passed';
-          this.store.event('READY', `${c.symbol} / ${formatEther(m.wethBalance)} WETH in pool`);
+          this.store.event(
+            'READY',
+            `${c.symbol} / ${m.venue === 'pons' ? 'PONS / ' : 'V3 / '}${formatEther(m.wethBalance)} quote reserve`,
+          );
         }
         if (this.c.MODE !== 'watch' && this.canEnter()) await this.buy(c, m);
         c.nextTry = Math.max(c.nextTry, Date.now() + 5000);
@@ -204,24 +240,27 @@ export class Engine {
       this.store.save();
       return;
     }
-    const fresh = await this.dex.market(m.pool);
+    const fresh = await this.dex.market(m.pool, m.venue);
+    this.dex.entryCheck(fresh);
     const q = await this.dex.quote(fresh, this.c.BUY_ETH);
     if (q.priceMoveBps > this.c.MAX_PRICE_MOVE_BPS) throw Error('Price moved before entry');
-    const minimum = minOut(q.out, this.c.SLIPPAGE_BPS);
+    const minimum = minOut(q.minimumBasis ?? q.out, this.c.SLIPPAGE_BPS);
     if (this.c.MODE === 'paper') {
       const s = this.store.state;
-      s.spentWei = (BigInt(s.spentWei) + this.c.BUY_ETH).toString();
+      const spent = q.spent ?? this.c.BUY_ETH;
+      s.spentWei = (BigInt(s.spentWei) + spent).toString();
       s.positions[m.token] = {
+        venue: m.venue,
         pool: m.pool,
         token: m.token,
         symbol: m.symbol,
         decimals: m.decimals,
         fee: m.fee,
         amountWei: q.out.toString(),
-        entryWei: this.c.BUY_ETH.toString(),
+        entryWei: spent.toString(),
         gasWei: '0',
         openedAt: Date.now(),
-        markWei: this.c.BUY_ETH.toString(),
+        markWei: spent.toString(),
         markAt: 0,
         nextExitTry: 0,
       };
@@ -231,10 +270,11 @@ export class Engine {
       return;
     }
     if (!this.tx) throw Error('Watch mode cannot buy');
-    const req = await this.dex.swapRequest(m, this.c.BUY_ETH, minimum, this.account);
+    const req = await this.dex.swapRequest(fresh, this.c.BUY_ETH, minimum, this.account);
     if (Date.now() - q.at > 5000) throw Error('Entry quote expired');
     await this.tx.execute(req, {
       action: 'buy',
+      route: fresh.route ?? 'v3',
       token: m.token,
       pool: m.pool,
       amountWei: this.c.BUY_ETH.toString(),
@@ -246,12 +286,17 @@ export class Engine {
       if (this.stopping) return;
       if (this.store.state.pending) return;
       try {
-        const m = await this.dex.market(p.pool),
+        const m = await this.dex.market(p.pool, p.venue),
           q = await this.dex.quote(m, BigInt(p.amountWei), true);
         p.markWei = q.out.toString();
         p.markAt = Date.now();
         this.store.save();
-        const reason = exitReason(p, q.out, this.c);
+        const reason =
+          m.route === 'v4'
+            ? 'GRADUATED / V4 EXIT'
+            : m.pons && m.pons.progressBps >= this.c.PONS_EXIT_PROGRESS_BPS
+              ? 'BEFORE GRADUATION'
+              : exitReason(p, q.out, this.c);
         if (reason && Date.now() >= p.nextExitTry) await this.sell(p, m, reason);
       } catch (e) {
         p.nextExitTry = Date.now() + 15000;
@@ -278,33 +323,31 @@ export class Engine {
     const amount = BigInt(p.amountWei);
     if ((await token.getFunction('balanceOf')(this.account)) < amount)
       throw Error('Tracked balance changed; refusing to sell an invented amount');
-    const allowance: bigint = await token.getFunction('allowance')(this.account, this.c.V3_ROUTER);
-    if (allowance < amount) {
-      const approveAmount = allowance > 0n ? 0n : amount;
-      await this.tx.execute(
-        {
-          to: p.token,
-          data: ERC20.encodeFunctionData('approve', [this.c.V3_ROUTER, approveAmount]),
-        },
-        {
-          action: 'approve',
-          token: p.token,
-          pool: p.pool,
-          amountWei: approveAmount.toString(),
-          minimumWei: '0',
-        },
-      );
-      // A later tick obtains a fresh quote after allowance confirmation.
-      return;
+    // A graduation between ticks can change the spender from curve to Permit2.
+    // Resolve it again before approving; never reuse the old route's allowance.
+    const approvalMarket = await this.dex.market(p.pool, p.venue);
+    const approval = await this.dex.approval(approvalMarket, this.account, amount);
+    if (approval) {
+      await this.tx.execute(approval.request, {
+        action: 'approve',
+        route: approvalMarket.route ?? 'v3',
+        token: p.token,
+        pool: p.pool,
+        amountWei: approval.amount.toString(),
+        minimumWei: '0',
+      });
+      return; // A later tick quotes again after confirmation.
     }
-    const fresh = await this.dex.market(p.pool),
+    const fresh = await this.dex.market(p.pool, p.venue),
       q = await this.dex.quote(fresh, amount, true),
       minimum = minOut(q.out, this.c.SLIPPAGE_BPS);
-    const req = await this.dex.swapRequest(m, amount, minimum, this.account, true);
+    const req = await this.dex.swapRequest(fresh, amount, minimum, this.account, true);
     if (Date.now() - q.at > 5000) throw Error('Exit quote expired');
     this.store.event('EXIT SENT', `${p.symbol} / ${reason}`);
     await this.tx.execute(req, {
       action: 'sell',
+      route: fresh.route ?? 'v3',
+      poolId: fresh.route === 'v4' ? poolId(fresh.pons!.key) : undefined,
       token: p.token,
       pool: p.pool,
       amountWei: amount.toString(),

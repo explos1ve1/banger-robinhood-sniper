@@ -72,7 +72,9 @@ working directory and a persistent `data` volume. Do not share a signing
 wallet between multiple bot processes. There is no HTTP server or public
 management endpoint in this MVP.
 
-The tests use Ganache in-process; no listening port is required. Some newer
+V3 tests use Ganache in-process. PONS/V4 tests start a temporary Anvil
+listener on 127.0.0.1, funded only with test ETH, and stop it after the test.
+Anvil is a development dependency; it is not used by the live bot. Some newer
 Node versions print a Ganache native-WebSocket compatibility notice. Its
 JavaScript fallback is sufficient for the tests and is not used by the bot.
 
@@ -80,3 +82,17 @@ The test suite uses the modular `@ganache/core` package. Its state manager
 expects `@ethereumjs/util` 8.x but does not declare it as a runtime dependency;
 the test environment therefore pins that package explicitly. Keep the lockfile
 and this development-only compatibility dependency when updating fixtures.
+
+## PONS state and upgrades
+
+Existing V3 records without a venue field are treated as V3. PONS records
+carry `venue=pons`, while pending transactions also preserve `curve` or `v4`
+as their execution route. Enabling PONS keeps the existing session budgets.
+Its factory, V4 deployment and router version are pinned after startup checks.
+A different PONS deployment is refused in the same state directory.
+
+`VENUES` controls new discovery/entries only. Already tracked positions still
+have their venue initialized and managed if new entries for that venue are
+turned off. During a stalled graduation the holding stays open; stale marks
+prevent further entries once the usual 30-second freshness limit is reached.
+See [PONS.md](PONS.md) for partial fills, allowance handling and graduation.

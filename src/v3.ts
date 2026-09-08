@@ -11,6 +11,9 @@ import { clean, type Config } from './config.js';
 import type { Candidate } from './store.js';
 
 export interface Market {
+  venue?: 'v3' | 'pons';
+  route?: 'v3' | 'curve' | 'v4';
+  pons?: import('./pons.js').PonsMarketState;
   token: string;
   pool: string;
   fee: number;
@@ -21,6 +24,8 @@ export interface Market {
   sqrt: bigint;
 }
 export interface Quote {
+  spent?: bigint;
+  minimumBasis?: bigint;
   out: bigint;
   priceMoveBps: number;
   at: number;

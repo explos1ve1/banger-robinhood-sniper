@@ -4,6 +4,8 @@ import os from 'node:os';
 import type { Config } from './config.js';
 
 export interface Candidate {
+  venue?: 'v3' | 'pons';
+  progressBps?: number;
   pool: string;
   token: string;
   fee: number;
@@ -17,6 +19,7 @@ export interface Candidate {
   nextTry: number;
 }
 export interface Position {
+  venue?: 'v3' | 'pons';
   pool: string;
   token: string;
   symbol: string;
@@ -35,6 +38,8 @@ export interface Position {
   nextExitTry: number;
 }
 export interface Pending {
+  route?: 'v3' | 'curve' | 'v4';
+  poolId?: string;
   hash: string;
   raw: string;
   nonce: number;
@@ -51,6 +56,7 @@ export interface Entry {
   message: string;
 }
 export interface State {
+  ponsDeployment?: string;
   version: 1;
   identity: string;
   cursor: number;

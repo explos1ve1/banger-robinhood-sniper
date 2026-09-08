@@ -59,7 +59,15 @@ export function terminal(
       ...pools.map(
         (p) =>
           pad(colors.bold(clean(p.symbol, 12)), 15) +
-          pad(p.pool.slice(0, 6) + '…' + p.pool.slice(-4), 16) +
+          pad(
+            p.venue === 'pons'
+              ? 'PONS ' +
+                  (p.progressBps == null
+                    ? '--'
+                    : (Math.min(10000, p.progressBps) / 100).toFixed(1) + '%')
+              : p.pool.slice(0, 6) + '…' + p.pool.slice(-4),
+            16,
+          ) +
           (p.status === 'entered'
             ? mint('FILLED')
             : p.status === 'blocked' || p.status === 'expired'
@@ -67,7 +75,7 @@ export function terminal(
               : lime(p.status.toUpperCase())),
       ),
       ...Array.from({ length: Math.max(0, 7 - pools.length) }, () =>
-        muted('···            listening for new V3 pools'),
+        muted('···            listening for enabled launch venues'),
       ),
     ],
     split ? Math.floor((width - 2) * 0.57) : width,
@@ -131,7 +139,7 @@ export function terminal(
             pad(eth(p.entryWei), col) +
             pad(eth(value), col) +
             pad(profit >= 0n ? mint(eth(profit)) : red(eth(profit)), col) +
-            (p.closedAt ? 'CLOSED' : 'OPEN')
+            (p.closedAt ? 'CLOSED' : p.venue === 'pons' ? 'PONS' : 'OPEN')
           );
         }),
       ...(Object.keys(s.positions).length
