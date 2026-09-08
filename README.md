@@ -1,6 +1,6 @@
 <div align="center">
 
-![BANGER](docs/assets/banner.svg)
+![Banger Robinhood Sniper](docs/assets/banner.png)
 
 **New pools. Measured entries. Controlled exits.**
 
