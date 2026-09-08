@@ -12,7 +12,7 @@ A self-hosted sniper engine for PONS V2 launches and V3 WETH pairs on Robinhood 
 ![Uniswap](https://img.shields.io/badge/Uniswap-V3_%2B_V4-4cffa8?style=flat-square)
 ![License](https://img.shields.io/badge/License-MIT-eff3e9?style=flat-square)
 
-[Quick start](#quick-start) · [How it works](#how-it-works) · [Configuration](docs/CONFIGURATION.md) · [Українською](docs/START_UA.md)
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Configuration](docs/CONFIGURATION.md)
 
 </div>
 
